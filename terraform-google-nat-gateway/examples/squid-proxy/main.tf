@@ -28,10 +28,26 @@ resource "google_container_cluster" "k8s_cluster" {
       "https://www.googleapis.com/auth/logging.write",
       "https://www.googleapis.com/auth/monitoring",
     ]
+    # tags = [ "${var.network_name}-squid" ]
+    
   }
+
+  network    = "${google_compute_network.default.self_link}"
+  subnetwork =  "${google_compute_subnetwork.default.self_link}"
 
   min_master_version = "1.11.6-gke.0"
   node_version       = "1.11.6-gke.0"
+}
+
+
+resource "google_compute_route" "gke-master-default-gw" {
+  count            = 1
+  name             = "masterroutes"
+  dest_range       = "0.0.0.0/0"
+  network          = "${google_compute_network.default.self_link}"
+  next_hop_gateway = "default-internet-gateway"
+  tags             = ["${var.network_name}-squid"]
+  priority         = 700
 }
 
 #https://www.terraform.io/docs/providers/google/r/compute_network.html
@@ -70,68 +86,69 @@ resource "google_compute_subnetwork" "default" {
 }
 
 module "nat" {
-  source        = "GoogleCloudPlatform/nat-gateway/google"
+  source        = "../"
   name          = "${var.network_name}-"
   region        = "${var.region}"
   zone          = "${var.zone}"
-  network       = "${google_compute_subnetwork.default.name}"
-  subnetwork    = "${google_compute_subnetwork.default.name}"
+  tags          = ["${var.network_name}-squid"]
+  network       = "squid-nat-example"
+  subnetwork    = "squid-nat-example"
   squid_enabled = "true"
 }
 
 # https://www.terraform.io/docs/providers/google/d/datasource_compute_instance.html
-resource "google_compute_instance" "vm" {
-  name                      = "${var.network_name}-vm"
-  zone                      = "${var.zone}"
-  tags                      = ["${var.network_name}-ssh", "${var.network_name}-squid"]
+# resource "google_compute_instance" "vm" {
+#   name                      = "${var.network_name}-vm"
+#   zone                      = "${var.zone}"
+#   tags                      = ["${var.network_name}-ssh", "${var.network_name}-squid"]
   
-  # The machine type to create
-  machine_type              = "f1-micro"
-  allow_stopping_for_update = true
+#   # The machine type to create
+#   machine_type              = "f1-micro"
+#   allow_stopping_for_update = true
 
-  # The boot disk for the instance
-  boot_disk {
+#   # The boot disk for the instance
+#   boot_disk {
 
-    # Parameters with which a disk was created alongside the 
-    # instance. 
-    initialize_params {
-      # The image from which this disk was initialised.
-      image = "${var.vm_image}"
-    }
-  }
+#     # Parameters with which a disk was created alongside the 
+#     # instance. 
+#     initialize_params {
+#       # The image from which this disk was initialised.
+#       image = "${var.vm_image}"
+#     }
+#   }
 
-  network_interface {
-    subnetwork    = "${google_compute_subnetwork.default.name}"
-    access_config = []
-  }
-}
+#   network_interface {
+#     subnetwork    = "${google_compute_subnetwork.default.name}"
+#     access_config = []
+#   }
+# }
 
-# https://www.terraform.io/docs/providers/google/r/compute_firewall.html
-resource "google_compute_firewall" "vm-ssh" {
-  name    = "${var.network_name}-ssh"
-  network = "${google_compute_subnetwork.default.name}"
+# # https://www.terraform.io/docs/providers/google/r/compute_firewall.html
+# resource "google_compute_firewall" "vm-ssh" {
+#   name    = "${var.network_name}-ssh"
+#   network = "${google_compute_subnetwork.default.name}"
 
-  allow {
-    protocol = "tcp"
-    ports    = ["22"]
-  }
+#   allow {
+#     protocol = "tcp"
+#     ports    = ["22"]
+#   }
 
-  # (Optional) If source ranges are specified, the firewall will 
-  # apply only to traffic that has source IP address in these ranges. 
-  # These ranges must be expressed in CIDR format. One or both of 
-  # sourceRanges and sourceTags may be set. If both properties are set, 
-  # the firewall will apply to traffic that has source IP address 
-  # within sourceRanges OR the source IP that belongs to a tag listed 
-  # in the sourceTags property. The connection does not need to match 
-  # both properties for the firewall to apply. Only IPv4 is supported
-  # In other words allow traffic from the range specified.
-  source_ranges = ["0.0.0.0/0"]
+#   # (Optional) If source ranges are specified, the firewall will 
+#   # apply only to traffic that has source IP address in these ranges. 
+#   # These ranges must be expressed in CIDR format. One or both of 
+#   # sourceRanges and sourceTags may be set. If both properties are set, 
+#   # the firewall will apply to traffic that has source IP address 
+#   # within sourceRanges OR the source IP that belongs to a tag listed 
+#   # in the sourceTags property. The connection does not need to match 
+#   # both properties for the firewall to apply. Only IPv4 is supported
+#   # In other words allow traffic from the range specified.
+#   source_ranges = ["0.0.0.0/0"]
 
-  # (Optional) A list of instance tags indicating sets of instances 
-  # located in the network that may make network connections as 
-  # specified in allowed[]. If no targetTags are specified, the firewall rule applies to all instances on the specified network.
-  target_tags   = ["${var.network_name}-ssh"]
-}
+#   # (Optional) A list of instance tags indicating sets of instances 
+#   # located in the network that may make network connections as 
+#   # specified in allowed[]. If no targetTags are specified, the firewall rule applies to all instances on the specified network.
+#   target_tags   = ["${var.network_name}-ssh"]
+# }
 
 
 // Since we aren't using the NAT on the test VM, add separate firewall rule for the squid proxy.
@@ -154,6 +171,7 @@ resource "google_compute_firewall" "nat-squid" {
 # the output command. output variables as a way to organize 
 # data to be easily queried and shown back to the Terraform user
 # outputs show information when terraform apply command finish
+
 output "nat-host" {
   value = "${module.nat.instance}"
 }
@@ -162,8 +180,8 @@ output "nat-ip" {
   value = "${module.nat.external_ip}"
 }
 
-output "vm-host" {
-  # self_link The URI of the created resource.
-  value = "${google_compute_instance.vm.self_link}"
-}
+# output "vm-host" {
+#   # self_link The URI of the created resource.
+#   value = "${google_compute_instance.vm.self_link}"
+# }
 
